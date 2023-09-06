@@ -1,5 +1,4 @@
 import * as bril from './bril.ts';
-import * as iter from 'https://deno.land/x/iter@v3.1.0/mod.ts';
 import { Line, formBlocks } from './form_blocks.ts';
 import { readStdin } from './util.ts';
 
@@ -29,8 +28,7 @@ function eliminateDeadCode(func: bril.Function): boolean {
     }
   }
 
-  const newInstrs = iter.flatMap(blocks, cleanBlock);
-  func.instrs = [...newInstrs];
+  func.instrs = blocks.flatMap((b) => [...cleanBlock(b)]);
 
   return dirty;
 }
