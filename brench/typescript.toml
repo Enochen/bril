@@ -1,0 +1,23 @@
+extract = 'total_dyn_inst: (\d+)'
+benchmarks = '../benchmarks/core/*.bril'
+
+[runs.baseline]
+pipeline = [
+    "bril2json",
+    "brili -p {args}",
+]
+
+[runs.tdce]
+pipeline = [
+    "bril2json",
+    "deno run ../bril-ts/tdce.ts",
+    "brili -p {args}",
+]
+
+[runs.lvn]
+pipeline = [
+    "bril2json",
+    "deno run ../bril-ts/lvn.ts",
+    "deno run ../bril-ts/tdce.ts",
+    "brili -p {args}",
+]
