@@ -1,0 +1,5 @@
+@main {
+  a: int = const 4;
+  sum1: int = id a;
+  print sum1;
+}

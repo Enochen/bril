@@ -1,5 +1,6 @@
 import * as bril from './bril.ts';
-import { Line, formBlocks } from './form_blocks.ts';
+import { Line } from './bril_util.ts';
+import { formBlocks } from './form_blocks.ts';
 import { readStdin } from './util.ts';
 
 // Trivial form of dead code elimination, returns true if instructions changed
@@ -20,9 +21,15 @@ function eliminateDeadCode(func: bril.Function): boolean {
 
   function* cleanBlock(block: Iterable<Line>) {
     for (const instr of block) {
-      if ('dest' in instr && !used.has(instr.dest)) {
-        dirty = true;
-        continue;
+      if ('dest' in instr) {
+        if (!used.has(instr.dest)) {
+          dirty = true;
+          continue;
+        }
+        if (instr.op == 'id' && instr.args?.includes(instr.dest)) {
+          dirty = true;
+          continue;
+        }
       }
       yield instr;
     }

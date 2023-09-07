@@ -1,19 +1,16 @@
 import { readStdin } from './util.ts';
 import * as bril from './bril.ts';
 import { instrToString } from './briltxt.ts';
+import { Block } from './bril_util.ts';
 
 const TERMINATORS = new Set(['br', 'jmp', 'ret']);
-
-export type Line = bril.Instruction | bril.Label;
-
-export type Block = Line[];
 
 export function* formBlocks(func: bril.Function): Generator<Block> {
   let block = [];
   for (const instr of func.instrs) {
     if ('op' in instr) {
       block.push(instr);
-      if (instr.op in TERMINATORS) {
+      if (TERMINATORS.has(instr.op)) {
         yield block;
         block = [];
       }

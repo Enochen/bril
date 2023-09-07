@@ -1,0 +1,1 @@
+command = "bril2json < {filename} | deno run ../../lvn.ts | deno run ../../tdce.ts | bril2txt"
