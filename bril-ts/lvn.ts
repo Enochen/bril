@@ -1,9 +1,7 @@
-import { timestamp } from 'https://esm.sh/typescript@5.0.4';
 import * as bril from './bril.ts';
-import { Block, Line, getArgs, isLabel } from './bril_util.ts';
+import { Block, Line, isLabel } from './bril_util.ts';
 import { readStdin } from './util.ts';
 import { formBlocks } from './form_blocks.ts';
-import { open } from 'https://esm.sh/v131/node_inspector.js';
 
 type Value =
   | {
@@ -24,7 +22,7 @@ type TableEntry = {
 
 const canonicalize = (value: Value) => {
   // TODO: Add more commutative operations
-  if (value.op == 'add') {
+  if (value.op == 'add' || value.op == 'mul') {
     return { op: value.op, args: [...value.args].sort() };
   }
   return value;
@@ -45,6 +43,26 @@ const valueIndex: Map<ValueString, number> = new Map();
 
 // Maps variable name to index in [table] containing its value
 const cloud: Map<Variable, number> = new Map();
+
+function fold(value: Value): bril.Value | undefined {
+  switch (value.op) {
+    case 'const':
+      return value.value;
+    case 'add': {
+      const [v1, v2] = value.args.map((arg) =>
+        fold(table[cloud.get(arg)!].value)
+      );
+      return (v1 as number) + (v2 as number);
+    }
+    case 'mul': {
+      const [v1, v2] = value.args.map((arg) =>
+        fold(table[cloud.get(arg)!].value)
+      );
+      return (v1 as number) * (v2 as number);
+    }
+  }
+  return undefined;
+}
 
 // Returns canonical variable of value that input variable refers to
 function lookup(variable: Variable): Variable {
@@ -72,7 +90,8 @@ function getLastWrites(block: Block) {
 
 function* applyLVN(block: Block): Iterable<Line> {
   const lastWrites = getLastWrites(block);
-  for (const [index, instr] of block.entries()) {
+  for (const [index, base_instr] of block.entries()) {
+    let instr: Line = { ...base_instr };
     if (isLabel(instr)) {
       continue;
     }
@@ -80,7 +99,17 @@ function* applyLVN(block: Block): Iterable<Line> {
       instr.args = instr.args?.map(lookup);
     }
     if ('dest' in instr) {
-      const value = canonicalize(toValue(instr));
+      let value = canonicalize(toValue(instr));
+      const foldedValue = fold(value);
+      if (foldedValue !== undefined) {
+        instr = {
+          dest: instr.dest,
+          op: 'const',
+          type: instr.type,
+          value: foldedValue,
+        } as const;
+        value = toValue(instr);
+      }
       const valueStr = JSON.stringify(value);
       let tableIndex = -1;
       if (valueIndex.has(valueStr)) {
@@ -104,7 +133,8 @@ function* applyLVN(block: Block): Iterable<Line> {
       // Remove old mapping if applicable
       const oldIndex = cloud.get(instr.dest);
       if (oldIndex !== undefined) {
-        table[oldIndex].variables.filter((v) => v !== instr.dest);
+        const tempInstr = instr;
+        table[oldIndex].variables.filter((v) => v !== tempInstr.dest);
       }
       cloud.set(instr.dest, tableIndex);
     } else {
