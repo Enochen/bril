@@ -1,0 +1,10 @@
+@main {
+  sum1: int = const 6;
+  sum2: int = const 6;
+.idk:
+.idk2:
+  lvn_temp_1: int = mul sum2 sum1;
+  print lvn_temp_1;
+  prod2: int = mul lvn_temp_1 sum1;
+  print prod2;
+}

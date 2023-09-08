@@ -1,4 +1,4 @@
 @main {
-  lvn_temp_3: int = const 36;
-  print lvn_temp_3;
+  lvn_temp_0: int = const 36;
+  print lvn_temp_0;
 }
