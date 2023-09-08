@@ -1,4 +1,4 @@
-use bril_rs::{EffectOps, Function, Instruction, ValueOps};
+use bril_rs::{Code, EffectOps, Function, Instruction};
 
 #[derive(Default, Clone)]
 pub struct Block {
@@ -21,12 +21,12 @@ pub fn form_blocks(func: &Function) -> Vec<Block> {
     let mut current_block = Block::default();
     for code in &func.instrs {
         match code {
-            bril_rs::Code::Label { label, .. } => {
+            Code::Label { label, .. } => {
                 blocks.push(current_block.clone());
                 current_block = Block::default();
                 current_block.label = Some(label.clone());
             }
-            bril_rs::Code::Instruction(instr) => {
+            Code::Instruction(instr) => {
                 current_block.instrs.push(instr.clone());
                 if is_terminator(instr) {
                     blocks.push(current_block.clone());
