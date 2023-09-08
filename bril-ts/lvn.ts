@@ -179,11 +179,6 @@ function* applyLVN(block: Block): Iterable<Line> {
       let value = canonicalize(toValue(instr));
       const foldedValue = fold(value);
       if (foldedValue !== undefined) {
-        if (Number.isNaN(foldedValue)) {
-          console.log(cloud);
-          console.log(table);
-          console.log(value);
-        }
         instr = {
           dest: instr.dest,
           op: 'const',
