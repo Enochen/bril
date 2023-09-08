@@ -3,6 +3,7 @@ import { Block, Line, isLabel } from './bril_util.ts';
 import { readStdin } from './util.ts';
 import { formBlocks } from './form_blocks.ts';
 
+let variableCounter = 0;
 type Value =
   | {
       op: bril.ValueOperation['op'];
@@ -45,21 +46,40 @@ const valueIndex: Map<ValueString, number> = new Map();
 const cloud: Map<Variable, number> = new Map();
 
 function fold(value: Value): bril.Value | undefined {
-  switch (value.op) {
-    case 'const':
-      return value.value;
-    case 'add': {
-      const [v1, v2] = value.args.map((arg) =>
-        fold(table[cloud.get(arg)!].value)
-      );
-      return (v1 as number) + (v2 as number);
+  try {
+    switch (value.op) {
+      case 'const':
+        return value.value;
+      case 'id': {
+        const v = table[cloud.get(lookup(value.args[0]))!].value;
+        if (v === undefined) {
+          throw 'something went wrong';
+        }
+        return fold(v);
+      }
+      case 'add': {
+        const foldedArgs = value.args.map((arg) =>
+          fold(table[cloud.get(lookup(arg))!].value)
+        );
+        if (foldedArgs.some((v) => v === undefined)) {
+          throw 'something went wrong';
+        }
+        const [v1, v2] = foldedArgs;
+        return (v1 as number) + (v2 as number);
+      }
+      case 'mul': {
+        const foldedArgs = value.args.map((arg) =>
+          fold(table[cloud.get(lookup(arg))!].value)
+        );
+        if (foldedArgs.some((v) => v === undefined)) {
+          throw 'something went wrong';
+        }
+        const [v1, v2] = foldedArgs;
+        return (v1 as number) * (v2 as number);
+      }
     }
-    case 'mul': {
-      const [v1, v2] = value.args.map((arg) =>
-        fold(table[cloud.get(arg)!].value)
-      );
-      return (v1 as number) * (v2 as number);
-    }
+  } catch (_) {
+    // If anything goes wrong, just return undefined
   }
   return undefined;
 }
@@ -70,11 +90,38 @@ function lookup(variable: Variable): Variable {
   if (index === undefined) {
     throw `Mapping does not exist for variable ${variable} in cloud`;
   }
+  // Hack to support input args without using up a table entry
+  if (index === -1) {
+    return variable;
+  }
   const { variables } = table[index];
   if (variables.length === 0) {
     throw `Table entry for ${variable} is missing canonical variable`;
   }
   return variables[0];
+}
+
+function updateCloud(variable: Variable, tableIndex: number) {
+  const oldIndex = cloud.get(variable);
+  if (oldIndex !== undefined && oldIndex >= 0) {
+    table[oldIndex].variables.filter((v) => v !== variable);
+  }
+  cloud.set(variable, tableIndex);
+}
+
+function updateTable(value: Value) {
+  const valueStr = JSON.stringify(value);
+  if (valueIndex.has(valueStr)) {
+    // We've already seen value
+    const tableIndex = valueIndex.get(valueStr)!;
+    return { index: tableIndex, entry: table[tableIndex] };
+  } else {
+    // This is a new value
+    const tableIndex = table.length;
+    valueIndex.set(valueStr, tableIndex);
+    table.push({ value, variables: [] });
+    return { index: tableIndex };
+  }
 }
 
 // Maps variable name to the index of the last instruction it gets written to
@@ -88,20 +135,55 @@ function getLastWrites(block: Block) {
   return result;
 }
 
+function setupInputArgs(block: Block) {
+  // Find all input args (names that are used before defined by an instruction)
+  const args = new Set<string>();
+  const defined = new Set<string>();
+  for (const instr of block) {
+    if ('args' in instr) {
+      instr.args?.forEach((arg) => {
+        if (!defined.has(arg)) args.add(arg);
+      });
+    }
+    if ('dest' in instr) {
+      defined.add(instr.dest);
+    }
+  }
+  for (const arg of args) {
+    // Add all args into cloud
+    cloud.set(arg, -1);
+  }
+}
+
 function* applyLVN(block: Block): Iterable<Line> {
+  table.length = 0;
+  valueIndex.clear();
+  cloud.clear();
+
+  setupInputArgs(block);
   const lastWrites = getLastWrites(block);
-  for (const [index, base_instr] of block.entries()) {
-    let instr: Line = { ...base_instr };
+  for (let [lineIndex, instr] of block.entries()) {
     if (isLabel(instr)) {
+      yield instr;
       continue;
     }
     if ('args' in instr) {
       instr.args = instr.args?.map(lookup);
     }
     if ('dest' in instr) {
+      if (instr.op === 'call') {
+        updateCloud(instr.dest, -1);
+        yield instr;
+        continue;
+      }
       let value = canonicalize(toValue(instr));
       const foldedValue = fold(value);
       if (foldedValue !== undefined) {
+        if (Number.isNaN(foldedValue)) {
+          console.log(cloud);
+          console.log(table);
+          console.log(value);
+        }
         instr = {
           dest: instr.dest,
           op: 'const',
@@ -110,36 +192,24 @@ function* applyLVN(block: Block): Iterable<Line> {
         } as const;
         value = toValue(instr);
       }
-      const valueStr = JSON.stringify(value);
-      let tableIndex = -1;
-      if (valueIndex.has(valueStr)) {
-        // We've already seen value
-        tableIndex = valueIndex.get(valueStr)!;
-        const { variables } = table[tableIndex];
+      const { index, entry } = updateTable(value);
+      if (lineIndex !== lastWrites.get(instr.dest)) {
+        // instr will be overwritten later
+        // register original name in cloud for later lookups
+        updateCloud(instr.dest, index);
+        // change name to throwaway for DCE to clean up easier
+        instr.dest = `lvn_temp_${variableCounter++}`;
+      }
+      if (entry !== undefined && foldedValue === undefined) {
         // Replace instruction with id that can be cleaned up with DCE
-        yield { ...instr, op: 'id', args: [variables[0]] };
+        instr = { ...instr, op: 'id', args: [entry.variables[0]] };
       } else {
-        // This is a new value
-        tableIndex = table.length;
-        if (index !== lastWrites.get(instr.dest)) {
-          // instr will be overwritten later
-          instr.dest = `lvn_temp_${tableIndex}`;
-        }
-        valueIndex.set(valueStr, tableIndex);
-        table.push({ value, variables: [instr.dest] });
-        cloud.set(instr.dest, tableIndex);
-        yield { ...instr };
+        table[index].variables.push(instr.dest);
       }
       // Remove old mapping if applicable
-      const oldIndex = cloud.get(instr.dest);
-      if (oldIndex !== undefined) {
-        const tempInstr = instr;
-        table[oldIndex].variables.filter((v) => v !== tempInstr.dest);
-      }
-      cloud.set(instr.dest, tableIndex);
-    } else {
-      yield instr;
+      updateCloud(instr.dest, index);
     }
+    yield instr;
   }
 }
 
